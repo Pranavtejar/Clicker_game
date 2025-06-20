@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"sync"
 	"time"
 
@@ -32,119 +31,34 @@ type PageData struct {
 	Rooms []Room
 }
 
-type RoomHub struct {
-	Clients      map[string]map[*websocket.Conn]bool
-	ClientsMux   sync.Mutex
-	Rooms        []Room
-	Timers       map[string]int
-	TimersMux    sync.Mutex
-	UserClicks   map[string]map[string]int
-	TimerStarted map[string]bool
-}
-
-func NewRoomHub() *RoomHub {
-	return &RoomHub{
-		Clients:      make(map[string]map[*websocket.Conn]bool),
-		Timers:       make(map[string]int),
-		UserClicks:   make(map[string]map[string]int),
-		TimerStarted: make(map[string]bool),
-	}
-}
-
-var upgrader = websocket.Upgrader{}
-
-func broadcast(hub *RoomHub, room string, message map[string]interface{}) {
-	hub.ClientsMux.Lock()
-	defer hub.ClientsMux.Unlock()
-
-	for conn := range hub.Clients[room] {
-		err := conn.WriteJSON(message)
-		if err != nil {
-			conn.Close()
-			delete(hub.Clients[room], conn)
-		}
-	}
-}
-
-func broadcastUserCount(hub *RoomHub, room string) {
-	userCount := len(hub.Clients[room])
-	broadcast(hub, room, map[string]interface{}{
-		"type": "user_count",
-		"data": userCount,
-	})
-}
-
-func startTimer(hub *RoomHub, room string) {
-	hub.TimersMux.Lock()
-	if hub.TimerStarted[room] {
-		hub.TimersMux.Unlock()
-		return
-	}
-	hub.TimerStarted[room] = true
-	hub.Timers[room] = 30
-	hub.TimersMux.Unlock()
-
-	go func() {
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			hub.TimersMux.Lock()
-			timeLeft := hub.Timers[room]
-			if timeLeft <= 0 {
-				hub.TimersMux.Unlock()
-				break
-			}
-			hub.Timers[room]--
-			hub.TimersMux.Unlock()
-
-			broadcast(hub, room, map[string]interface{}{
-				"type": "timer",
-				"data": timeLeft,
-			})
-
-			time.Sleep(1 * time.Second)
-		}
-
-		// Determine winner
-		hub.ClientsMux.Lock()
-		clicks := hub.UserClicks[room]
-		maxClicks := 0
-		winner := ""
-		for user, count := range clicks {
-			if count > maxClicks {
-				maxClicks = count
-				winner = user
-			}
-		}
-		hub.ClientsMux.Unlock()
-
-		broadcast(hub, room, map[string]interface{}{
-			"type": "winner",
-			"data": winner,
-		})
-	}()
-}
+var (
+	rooms      []Room
+	clients    = make(map[string]map[*websocket.Conn]bool)
+	clicks     = make(map[string]map[string]int)
+	timers     = make(map[string]int)
+	timerStart = make(map[string]bool)
+	upgrader   = websocket.Upgrader{}
+	clientsMux sync.Mutex
+	timersMux  sync.Mutex
+)
 
 func main() {
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
-	hub := NewRoomHub()
-
 	e.Renderer = &Template{
 		tmpl: template.Must(template.ParseGlob("templates/*.html")),
 	}
 
 	e.GET("/", func(c echo.Context) error {
-		return c.Render(http.StatusOK, "index", PageData{Rooms: hub.Rooms})
+		return c.Render(http.StatusOK, "index", PageData{Rooms: rooms})
 	})
 
 	e.POST("/create", func(c echo.Context) error {
 		name := c.FormValue("search")
 		room := Room{RoomName: name, TimeCreated: time.Now()}
-		hub.Rooms = append(hub.Rooms, room)
+		rooms = append(rooms, room)
 		return c.Render(http.StatusOK, "rooms", room)
 	})
 
@@ -175,23 +89,22 @@ func main() {
 		}
 		defer conn.Close()
 
-		hub.ClientsMux.Lock()
-		if hub.Clients[room] == nil {
-			hub.Clients[room] = make(map[*websocket.Conn]bool)
+		clientsMux.Lock()
+		if clients[room] == nil {
+			clients[room] = make(map[*websocket.Conn]bool)
 		}
-		hub.Clients[room][conn] = true
-		if hub.UserClicks[room] == nil {
-			hub.UserClicks[room] = make(map[string]int)
+		clients[room][conn] = true
+		if clicks[room] == nil {
+			clicks[room] = make(map[string]int)
 		}
-		broadcastUserCount(hub, room)
-		hub.ClientsMux.Unlock()
+		broadcastUserCount(room)
+		clientsMux.Unlock()
 
-		startTimer(hub, room)
+		startTimer(room)
 
-		// Send current timer to new user
-		hub.TimersMux.Lock()
-		current := hub.Timers[room]
-		hub.TimersMux.Unlock()
+		timersMux.Lock()
+		current := timers[room]
+		timersMux.Unlock()
 		conn.WriteJSON(map[string]interface{}{
 			"type": "timer",
 			"data": current,
@@ -202,30 +115,95 @@ func main() {
 			if err != nil {
 				break
 			}
-
 			var data map[string]interface{}
-			if err := json.Unmarshal(msg, &data); err == nil {
-				if data["type"] == "signal" {
-					hub.ClientsMux.Lock()
-					hub.UserClicks[room][username]++
-					hub.ClientsMux.Unlock()
-				}
+			if err := json.Unmarshal(msg, &data); err == nil && data["type"] == "signal" {
+				clientsMux.Lock()
+				clicks[room][username]++
+				clientsMux.Unlock()
 			}
 		}
 
-		hub.ClientsMux.Lock()
-		delete(hub.Clients[room], conn)
-		broadcastUserCount(hub, room)
-		hub.ClientsMux.Unlock()
+		clientsMux.Lock()
+		delete(clients[room], conn)
+		broadcastUserCount(room)
+		clientsMux.Unlock()
 
 		return nil
 	})
 
-	// 🌐 Dynamic port support for Render (default to 8080 if not set)
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	e.Logger.Fatal(e.Start(":" + port))
+	e.Logger.Fatal(e.Start(":8080"))
 }
 
+func broadcastUserCount(room string) {
+	userCount := len(clients[room])
+	for conn := range clients[room] {
+		err := conn.WriteJSON(map[string]interface{}{
+			"type": "user_count",
+			"data": userCount,
+		})
+		if err != nil {
+			conn.Close()
+			delete(clients[room], conn)
+		}
+	}
+}
+
+func startTimer(room string) {
+	timersMux.Lock()
+	if timerStart[room] {
+		timersMux.Unlock()
+		return
+	}
+	timerStart[room] = true
+	timers[room] = 30
+	timersMux.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			timersMux.Lock()
+			timeLeft := timers[room]
+			if timeLeft <= 0 {
+				timersMux.Unlock()
+				break
+			}
+			timers[room]--
+			timersMux.Unlock()
+
+			clientsMux.Lock()
+			for conn := range clients[room] {
+				err := conn.WriteJSON(map[string]interface{}{
+					"type": "timer",
+					"data": timeLeft,
+				})
+				if err != nil {
+					conn.Close()
+					delete(clients[room], conn)
+				}
+			}
+			clientsMux.Unlock()
+
+			time.Sleep(1 * time.Second)
+		}
+
+		clientsMux.Lock()
+		roomClicks := clicks[room]
+		max := 0
+		winner := ""
+		for name, count := range roomClicks {
+			if count > max {
+				max = count
+				winner = name
+			}
+		}
+		for conn := range clients[room] {
+			conn.WriteJSON(map[string]interface{}{
+				"type": "winner",
+				"data": winner,
+			})
+		}
+		clientsMux.Unlock()
+	}()
+}
