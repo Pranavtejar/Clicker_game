@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -52,7 +53,7 @@ func NewRoomHub() *RoomHub {
 
 var upgrader = websocket.Upgrader{}
 
-func (hub *RoomHub) broadcast(room string, message map[string]interface{}) {
+func broadcast(hub *RoomHub, room string, message map[string]interface{}) {
 	hub.ClientsMux.Lock()
 	defer hub.ClientsMux.Unlock()
 
@@ -65,15 +66,15 @@ func (hub *RoomHub) broadcast(room string, message map[string]interface{}) {
 	}
 }
 
-func (hub *RoomHub) broadcastUserCount(room string) {
+func broadcastUserCount(hub *RoomHub, room string) {
 	userCount := len(hub.Clients[room])
-	hub.broadcast(room, map[string]interface{}{
+	broadcast(hub, room, map[string]interface{}{
 		"type": "user_count",
 		"data": userCount,
 	})
 }
 
-func (hub *RoomHub) startTimer(room string) {
+func startTimer(hub *RoomHub, room string) {
 	hub.TimersMux.Lock()
 	if hub.TimerStarted[room] {
 		hub.TimersMux.Unlock()
@@ -97,7 +98,7 @@ func (hub *RoomHub) startTimer(room string) {
 			hub.Timers[room]--
 			hub.TimersMux.Unlock()
 
-			hub.broadcast(room, map[string]interface{}{
+			broadcast(hub, room, map[string]interface{}{
 				"type": "timer",
 				"data": timeLeft,
 			})
@@ -118,7 +119,7 @@ func (hub *RoomHub) startTimer(room string) {
 		}
 		hub.ClientsMux.Unlock()
 
-		hub.broadcast(room, map[string]interface{}{
+		broadcast(hub, room, map[string]interface{}{
 			"type": "winner",
 			"data": winner,
 		})
@@ -182,11 +183,10 @@ func main() {
 		if hub.UserClicks[room] == nil {
 			hub.UserClicks[room] = make(map[string]int)
 		}
-		hub.broadcastUserCount(room)
+		broadcastUserCount(hub, room)
 		hub.ClientsMux.Unlock()
 
-		// Start timer if not already started
-		hub.startTimer(room)
+		startTimer(hub, room)
 
 		// Send current timer to new user
 		hub.TimersMux.Lock()
@@ -215,10 +215,17 @@ func main() {
 
 		hub.ClientsMux.Lock()
 		delete(hub.Clients[room], conn)
-		hub.broadcastUserCount(room) hub.ClientsMux.Unlock()
+		broadcastUserCount(hub, room)
+		hub.ClientsMux.Unlock()
 
 		return nil
 	})
 
-	e.Logger.Fatal(e.Start(":8080"))
+	// 🌐 Dynamic port support for Render (default to 8080 if not set)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	e.Logger.Fatal(e.Start(":" + port))
 }
+
