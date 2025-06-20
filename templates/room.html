@@ -1,0 +1,46 @@
+{{ define "room" }}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Room - {{ .Room }}</title>
+</head>
+<body>
+    <h1>Welcome, {{ .Username }} to room: {{ .Room }}</h1>
+
+    <div id="timer">⏳ Countdown: ...</div>
+    <div id="msg">Connecting to WebSocket...</div>
+    <div id="winner">The Winner is...</div>
+    <button onclick="sendSignal()">CLICK</button>
+
+    <script>
+        const roomName = "{{ .Room }}";
+        const username = "{{ .Username }}";
+        const socket = new WebSocket("ws://" + location.host + "/ws/" + roomName + "?username=" + encodeURIComponent(username));
+
+        socket.onmessage = function (event) {
+            const msg = JSON.parse(event.data);
+
+            if (msg.type === "timer") {
+                const t = document.getElementById("timer");
+                if (msg.data > 0) {
+                    t.innerText = `⏳ Countdown: ${msg.data}s`;
+                } else {
+                    t.innerText = "⏰ Time's up!";
+                }
+            } else if (msg.type === "user_count") {
+                const m = document.getElementById("msg");
+                m.innerHTML = `<b>Users in room:</b> ${msg.data}`;
+            } else if (msg.type === "winner") {
+                const m = document.getElementById("winner");
+                m.innerText = `🏆 The winner is: ${msg.data}`;
+            }
+        };
+
+        function sendSignal() {
+            socket.send(JSON.stringify({ type: "signal", data: "button_click" }));
+        }
+    </script>
+</body>
+</html>
+{{ end }}

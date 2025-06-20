@@ -1,0 +1,39 @@
+{{ define "index" }}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Room Creator</title>
+    <script src="https://unpkg.com/htmx.org@1.9.2"></script>
+</head>
+<body>
+    {{ template "form" }}
+
+    <div id="rooms">
+        {{ range .Rooms }}
+            {{ template "rooms" . }}
+        {{ end }}
+    </div>
+</body>
+</html>
+{{ end }}
+
+{{ define "form" }}
+<form hx-post="/create" hx-target="#rooms" hx-swap="beforeend">
+    <label>create:</label>
+    <input type="text" name="search">
+    <button type="submit">Submit</button>
+</form>
+{{ end }}
+
+{{ define "rooms" }}
+<hr>
+Room Name: {{ .RoomName }}<br>
+<form hx-post="/join">
+    <input type="hidden" name="room" value="{{ .RoomName }}">
+    <label>username:</label>
+    <input type="text" name="username">
+    <button type="submit">Join</button>
+</form>
+{{ end }}
