@@ -12,6 +12,7 @@
     <div id="msg">Connecting to WebSocket...</div>
     <div id="winner">The Winner is...</div>
     <button onclick="sendSignal()">CLICK</button>
+
     <script>
         const roomName = "{{ .Room }}";
         const username = "{{ .Username }}";
@@ -21,14 +22,25 @@
             "/ws/" + roomName +
             "?username=" + encodeURIComponent(username)
         );
-    
-        socket.onopen = () => console.log("✅ WebSocket connected");
-        socket.onerror = (e) => console.error("❌ WebSocket error", e);
-        socket.onclose = () => console.warn("⚠️ WebSocket closed");
-    
+
+        socket.onopen = () => {
+            console.log("✅ WebSocket connected");
+            document.getElementById("msg").innerText = "Connected to WebSocket";
+        };
+
+        socket.onerror = (e) => {
+            console.error("❌ WebSocket error", e);
+            document.getElementById("msg").innerText = "WebSocket error";
+        };
+
+        socket.onclose = () => {
+            console.warn("⚠️ WebSocket closed");
+            document.getElementById("msg").innerText = "WebSocket disconnected";
+        };
+
         socket.onmessage = function (event) {
             const msg = JSON.parse(event.data);
-    
+
             if (msg.type === "timer") {
                 const t = document.getElementById("timer");
                 if (msg.data > 0) {
@@ -37,18 +49,16 @@
                     t.innerText = "⏰ Time's up!";
                 }
             } else if (msg.type === "user_count") {
-                const m = document.getElementById("msg");
-                m.innerHTML = `<b>Users in room:</b> ${msg.data}`;
+                document.getElementById("msg").innerHTML = `<b>Users in room:</b> ${msg.data}`;
             } else if (msg.type === "winner") {
-                const m = document.getElementById("winner");
-                m.innerText = `🏆 The winner is: ${msg.data}`;
+                document.getElementById("winner").innerText = `🏆 The winner is: ${msg.data}`;
             }
         };
-    
+
         function sendSignal() {
             socket.send(JSON.stringify({ type: "signal", data: "button_click" }));
         }
-</script>
+    </script>
 </body>
 </html>
 {{ end }}
