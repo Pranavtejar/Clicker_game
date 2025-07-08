@@ -12,15 +12,23 @@
     <div id="msg">Connecting to WebSocket...</div>
     <div id="winner">The Winner is...</div>
     <button onclick="sendSignal()">CLICK</button>
-
     <script>
         const roomName = "{{ .Room }}";
         const username = "{{ .Username }}";
-        const socket = new WebSocket("ws://" + location.host + "/ws/" + roomName + "?username=" + encodeURIComponent(username));
-
+        const socket = new WebSocket(
+            (location.protocol === "https:" ? "wss://" : "ws://") +
+            location.host +
+            "/ws/" + roomName +
+            "?username=" + encodeURIComponent(username)
+        );
+    
+        socket.onopen = () => console.log("✅ WebSocket connected");
+        socket.onerror = (e) => console.error("❌ WebSocket error", e);
+        socket.onclose = () => console.warn("⚠️ WebSocket closed");
+    
         socket.onmessage = function (event) {
             const msg = JSON.parse(event.data);
-
+    
             if (msg.type === "timer") {
                 const t = document.getElementById("timer");
                 if (msg.data > 0) {
@@ -36,11 +44,11 @@
                 m.innerText = `🏆 The winner is: ${msg.data}`;
             }
         };
-
+    
         function sendSignal() {
             socket.send(JSON.stringify({ type: "signal", data: "button_click" }));
         }
-    </script>
+</script>
 </body>
 </html>
 {{ end }}
